@@ -168,7 +168,7 @@ type JWT struct {
 		ATHash        string `json:"at_hash"`
 		Name          string `json:"name"`
 		Picture       string `json:"picture"`
-		Given_name    string `json:"given_name"`
+		GivenName     string `json:"given_name"`
 		FamilyName    string `json:"family_name"`
 		Locale        string `json:"locale"`
 		Nonce         string `json:"nonce"`
@@ -177,7 +177,7 @@ type JWT struct {
 		IAT           int64  `json:"iat"`
 		EXP           int64  `json:"exp"`
 	}
-	Sig string
+	Signature string
 }
 
 func ParseJWT(tokenParts []string) (*JWT, error) {
@@ -202,7 +202,7 @@ func ParseJWT(tokenParts []string) (*JWT, error) {
 		return nil, fmt.Errorf("unable to json decode %v, %v", c, err)
 	}
 
-	token.Sig = tokenParts[2]
+	token.Signature = tokenParts[2]
 
 	return &token, nil
 }
