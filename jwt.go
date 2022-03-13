@@ -45,43 +45,15 @@ type Verifier struct {
 // NewVerifier returns a Verifier which will can parse and verify Google issued tokens.
 // Tokens will be verified with keys supplied by jwksReader and checked that their subject matches clientID.
 func NewVerifier(jwksReader io.Reader, clientID string) (*Verifier, error) {
-	m := make(map[string]*rsa.PublicKey)
-	jwks, err := parseJWKS(jwksReader)
-
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse JWKS %v", err)
-	}
-
-	for _, v := range jwks.Keys {
-		if v.E == "" || v.N == "" || v.KID == "" {
-			return nil, fmt.Errorf("missing info in JWK %v", v)
-		}
-		decodedN, err := base64.RawURLEncoding.DecodeString(v.N)
-		if err != nil {
-			return nil, fmt.Errorf("unable to base64 decode jwk n value %v, %v", v.N, err)
-		}
-		decodedE, err := base64.RawURLEncoding.DecodeString(v.E)
-		if err != nil {
-			return nil, fmt.Errorf("unable to base64 decode jwk e value %v, %v", v.E, err)
-		}
-
-		n := big.NewInt(0).SetBytes(decodedN)
-
-		e := big.NewInt(0).SetBytes(decodedE).Uint64()
-
-		m[v.KID] = &rsa.PublicKey{
-			N: n,
-			E: int(e),
-		}
-	}
-	if len(m) == 0 {
-		return nil, fmt.Errorf("no public keys %v", jwks)
-	}
 
 	v := &Verifier{
-		publicKeys: m,
-		clientID:   clientID,
-		issuer:     "https://accounts.google.com",
+		clientID: clientID,
+		issuer:   "https://accounts.google.com",
+	}
+	err := v.UpdatePublicKey(jwksReader)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to set public key, %v", err)
 	}
 
 	return v, nil
@@ -130,6 +102,43 @@ func (v *Verifier) ParseAndVerify(tokenString string) (*JWT, error) {
 	}
 
 	return parsedToken, nil
+}
+
+func (v *Verifier) UpdatePublicKey(jwksReader io.Reader) error {
+	m := make(map[string]*rsa.PublicKey)
+	jwks, err := parseJWKS(jwksReader)
+
+	if err != nil {
+		return fmt.Errorf("unable to parse JWKS %v", err)
+	}
+
+	for _, v := range jwks.Keys {
+		if v.E == "" || v.N == "" || v.KID == "" {
+			return fmt.Errorf("missing info in JWK %v", v)
+		}
+		decodedN, err := base64.RawURLEncoding.DecodeString(v.N)
+		if err != nil {
+			return fmt.Errorf("unable to base64 decode jwk n value %v, %v", v.N, err)
+		}
+		decodedE, err := base64.RawURLEncoding.DecodeString(v.E)
+		if err != nil {
+			return fmt.Errorf("unable to base64 decode jwk e value %v, %v", v.E, err)
+		}
+
+		n := big.NewInt(0).SetBytes(decodedN)
+
+		e := big.NewInt(0).SetBytes(decodedE).Uint64()
+
+		m[v.KID] = &rsa.PublicKey{
+			N: n,
+			E: int(e),
+		}
+	}
+	if len(m) == 0 {
+		return fmt.Errorf("no public keys %v", jwks)
+	}
+	v.publicKeys = m
+	return nil
 }
 
 func verifySignature(signedString, signature string, key *rsa.PublicKey) error {
