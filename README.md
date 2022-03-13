@@ -1,4 +1,4 @@
-[![Go Reference](https://pkg.go.dev/badge/github.com/meblum/jwt@v0.1.0.svg)](https://pkg.go.dev/github.com/meblum/jwt@v0.1.0)
+[![Go Reference](https://pkg.go.dev/badge/github.com/meblum/jwt.svg)](https://pkg.go.dev/github.com/meblum/jwt)
 # JWT
 A tiny and simple Go utility to parse and verify [Google issued](https://developers.google.com/identity/protocols/oauth2/openid-connect) Json Web Tokens.
 
