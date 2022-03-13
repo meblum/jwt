@@ -1,8 +1,8 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/meblum/jwt@v0.1.0.svg)](https://pkg.go.dev/github.com/meblum/jwt@v0.1.0)
 # JWT
-A tiny and simple Go library to parse and verify [Google issued](https://developers.google.com/identity/protocols/oauth2/openid-connect) Json Web Tokens.
+A tiny and simple Go utility to parse and verify [Google issued](https://developers.google.com/identity/protocols/oauth2/openid-connect) Json Web Tokens.
 
-Please see the [godoc](https://pkg.go.dev/github.com/meblum/jwt@v0.1.0) for documentation.
+Please see the [documentation](https://pkg.go.dev/github.com/meblum/jwt).
 
 ## Example
 
@@ -35,7 +35,9 @@ func main() {
 
 ## Licence
 
-```MIT License
+```
+MIT License
+
 Copyright (c) 2022 Meir Blumenfeld
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -55,3 +57,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
