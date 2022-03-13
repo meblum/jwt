@@ -100,7 +100,7 @@ func (v *Verifier) ParseAndVerify(tokenString string) (*JWT, error) {
 	}
 
 	var parsedToken *JWT
-	if parsedToken, err = ParseJWT(parts); err != nil {
+	if parsedToken, err = parseJWT(parts); err != nil {
 		return parsedToken, fmt.Errorf("unable to decode token %v, %v", parts, err)
 	}
 
@@ -180,7 +180,7 @@ type JWT struct {
 	Signature string
 }
 
-func ParseJWT(tokenParts []string) (*JWT, error) {
+func parseJWT(tokenParts []string) (*JWT, error) {
 
 	h, err := base64.RawURLEncoding.DecodeString(tokenParts[0])
 	if err != nil {
