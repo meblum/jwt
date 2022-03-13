@@ -42,7 +42,7 @@ type Verifier struct {
 	issuer     string
 }
 
-// NewVerifier returns a Verifier which will can parse and verify Google issued tokens.
+// NewVerifier returns a Verifier which parses and verifies Google issued tokens.
 // Tokens will be verified with keys supplied by jwksReader and checked that their subject matches clientID.
 func NewVerifier(jwksReader io.Reader, clientID string) (*Verifier, error) {
 
@@ -104,6 +104,7 @@ func (v *Verifier) ParseAndVerify(tokenString string) (*JWT, error) {
 	return parsedToken, nil
 }
 
+// UpdatePublicKey sets the verifier public key to the key obtained from jwksReader.
 func (v *Verifier) UpdatePublicKey(jwksReader io.Reader) error {
 	m := make(map[string]*rsa.PublicKey)
 	jwks, err := parseJWKS(jwksReader)
