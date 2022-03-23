@@ -12,15 +12,15 @@ package main
 import (
 	"fmt"
 	"net/http"
-    "github.com/meblum/jwt"
+	"github.com/meblum/jwt"
 )
 
 func main() {
-    // errors omitted for brevity
+	// errors omitted for brevity
 
 	res, _ := http.Get("https://www.googleapis.com/oauth2/v3/certs")
 	verifier, _ := jwt.NewVerifier(res.Body, "your.google.clientID")
-    res.Body.Close()
+	res.Body.Close()
 
 	token, err := verifier.ParseAndVerify("your.jwt.string")
 
