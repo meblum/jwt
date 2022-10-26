@@ -30,7 +30,7 @@ func parseJWKS(r io.Reader) (*jwks, error) {
 	if err != nil {
 		err = fmt.Errorf("error decoing json %v,%v", r, err)
 	}
-	if keys == nil {
+	if keys.Keys == nil {
 		err = fmt.Errorf("no keys in json %v", r)
 	}
 	return keys, err
