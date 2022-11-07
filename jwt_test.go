@@ -2,8 +2,10 @@ package jwt
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 var invalidTokens = []struct {
@@ -58,14 +60,21 @@ const validToken = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImY3M2U5ZTJiLTI0MmUtNDg0Mi04ODA5
 const validKey = `{"keys": [{"kty":"RSA","e":"AQAB","kid":"f73e9e2b-242e-4842-8809-65ba74800972","n":"u1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0_IzW7yWR7QkrmBL7jTKEn5u-qKhbwKfBstIs-bMY2Zkp18gnTxKLxoS2tFczGkPLPgizskuemMghRniWaoLcyehkd3qqGElvW_VDL5AaWTg0nLVkjRo9z-40RQzuVaE8AkAFmxZzow3x-VJYKdjykkJ0iT9wCS0DRTXu269V264Vf_3jvredZiKRkgwlL9xNAwxXFg0x_XFw005UWVRIkdgcKWTjpBP2dPwVZ4WWC-9aGVd-Gyn1o0CLelf4rEjGoXbAAEgAqeGUxrcIlbjXfbcmw"}]}`
 const testClientID = "1234.apps.googleusercontent.com"
 
+func keyGetterFunc(keySring string) KeyFetcherFunc {
+	return func() (r io.ReadCloser, expires time.Time, err error) {
+		return io.NopCloser(strings.NewReader(keySring)), time.Now().Add(time.Hour * 24), nil
+	}
+
+}
+
 func TestNewVerifier(t *testing.T) {
-	_, err := NewVerifier(strings.NewReader(validKey), testClientID)
+	_, err := NewVerifier(keyGetterFunc(validKey), testClientID)
 	if err != nil {
 		t.Errorf("New Verifier failed, %v", err)
 	}
 
 	for _, v := range invalidKeys {
-		_, err := NewVerifier(strings.NewReader(v.key), testClientID)
+		_, err := NewVerifier(keyGetterFunc(v.key), testClientID)
 		if err == nil {
 			t.Errorf("%v not throwing error", v.errorMsg)
 		}
@@ -74,7 +83,7 @@ func TestNewVerifier(t *testing.T) {
 }
 
 func TestParseAndVerify(t *testing.T) {
-	ver, _ := NewVerifier(strings.NewReader(validKey), testClientID)
+	ver, _ := NewVerifier(keyGetterFunc(validKey), testClientID)
 
 	_, err := ver.ParseAndVerify(validToken)
 	if err != nil {
@@ -91,11 +100,33 @@ func TestParseAndVerify(t *testing.T) {
 }
 
 func Example() {
+	tokenString := "eyJhbGciOiJSUzI1NiIsImtpZCI6ImY3M2U5ZTJiLTI0MmUtNDg0Mi04ODA5LTY1YmE3NDgwMDk3MiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiIxMjM0LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwiYXVkIjoiMTIzNC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsInN1YiI6IjEyMzQiLCJlbWFpbCI6IjEyMzRAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiIxMjM0IiwibmFtZSI6IkZvbyBCYXIiLCJwaWN0dXJlIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EtLzEyMzQiLCJnaXZlbl9uYW1lIjoiRm9vIiwiZmFtaWx5X25hbWUiOiJCYXIiLCJsb2NhbGUiOiJlbiIsImlhdCI6MTY0NjYxNzAxNCwiZXhwIjoyNjQ2NjIwNjE0fQ.tgccN6wgxazmstUiL88LKpGkZjfs5kzpl_qT91WDypmyClxVS4sMQng_JS9F2CAtWIS8uDh0r4SXCZLu5lOu7MxIq8q90pv3FgaghC_5zGeYcyRExGJkcy5CdqLQ5M8B5DpFhQA38hhMO5SLAs3r4MNlJYJpetyYLz5oa6PP6ygdrK8R4vsUMiRqJGnOzyaimpPD2st-pLQ2bI-is4W3uE9RVzM1C9yUjTwxovixUkGobtnjefWprZTd9JYxkZp2mzvlQHDjryr8zhJThGXNm50_ClbQGf-76wuTB2GH_iFiC-4QisJtJ1HOutDRmkSSPDaSI8pbc0RUOux0WroKzA"
+	clientID := "1234.apps.googleusercontent.com"
+
+	verifier, err := NewVerifier(DefaultKeyFetcher, clientID)
+	if err != nil {
+		// handle error
+	}
+
+	token, err := verifier.ParseAndVerify(tokenString)
+
+	if err != nil {
+		// token invalid, handle error
+	}
+	fmt.Println(token.Claims.Email)
+}
+
+func Example_customKeyGetter() {
 	jwk := `{"keys": [{"kty":"RSA","e":"AQAB","kid":"f73e9e2b-242e-4842-8809-65ba74800972","n":"u1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0_IzW7yWR7QkrmBL7jTKEn5u-qKhbwKfBstIs-bMY2Zkp18gnTxKLxoS2tFczGkPLPgizskuemMghRniWaoLcyehkd3qqGElvW_VDL5AaWTg0nLVkjRo9z-40RQzuVaE8AkAFmxZzow3x-VJYKdjykkJ0iT9wCS0DRTXu269V264Vf_3jvredZiKRkgwlL9xNAwxXFg0x_XFw005UWVRIkdgcKWTjpBP2dPwVZ4WWC-9aGVd-Gyn1o0CLelf4rEjGoXbAAEgAqeGUxrcIlbjXfbcmw"}]}`
 	tokenString := "eyJhbGciOiJSUzI1NiIsImtpZCI6ImY3M2U5ZTJiLTI0MmUtNDg0Mi04ODA5LTY1YmE3NDgwMDk3MiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiIxMjM0LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwiYXVkIjoiMTIzNC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsInN1YiI6IjEyMzQiLCJlbWFpbCI6IjEyMzRAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiIxMjM0IiwibmFtZSI6IkZvbyBCYXIiLCJwaWN0dXJlIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EtLzEyMzQiLCJnaXZlbl9uYW1lIjoiRm9vIiwiZmFtaWx5X25hbWUiOiJCYXIiLCJsb2NhbGUiOiJlbiIsImlhdCI6MTY0NjYxNzAxNCwiZXhwIjoyNjQ2NjIwNjE0fQ.tgccN6wgxazmstUiL88LKpGkZjfs5kzpl_qT91WDypmyClxVS4sMQng_JS9F2CAtWIS8uDh0r4SXCZLu5lOu7MxIq8q90pv3FgaghC_5zGeYcyRExGJkcy5CdqLQ5M8B5DpFhQA38hhMO5SLAs3r4MNlJYJpetyYLz5oa6PP6ygdrK8R4vsUMiRqJGnOzyaimpPD2st-pLQ2bI-is4W3uE9RVzM1C9yUjTwxovixUkGobtnjefWprZTd9JYxkZp2mzvlQHDjryr8zhJThGXNm50_ClbQGf-76wuTB2GH_iFiC-4QisJtJ1HOutDRmkSSPDaSI8pbc0RUOux0WroKzA"
 	clientID := "1234.apps.googleusercontent.com"
 
-	verifier, err := NewVerifier(strings.NewReader(jwk), clientID)
+	var keyGetter KeyFetcherFunc = func() (r io.ReadCloser, expires time.Time, err error) {
+
+		return io.NopCloser(strings.NewReader(jwk)), time.Now().Add(time.Hour * 24), nil
+	}
+
+	verifier, err := NewVerifier(keyGetter, clientID)
 	if err != nil {
 		// handle error
 	}
@@ -108,4 +139,13 @@ func Example() {
 	fmt.Println(token.Claims.Email)
 	// Output:
 	// 1234@gmail.com
+}
+
+func TestExtractMaxAge(t *testing.T) {
+	expectedAge := 22572
+	cacheCtrlVal := fmt.Sprintf("public, max-age=%v, must-revalidate, no-transform", expectedAge)
+	maxAge, err := extractMaxAge(cacheCtrlVal)
+	if maxAge != 22572 || err != nil {
+		t.Errorf("expected %q for %v, got %v", expectedAge, cacheCtrlVal, maxAge)
+	}
 }

@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	_ "crypto/sha256" // link into binary
@@ -9,54 +10,35 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
-type jwks struct {
-	Keys []struct {
-		// alg string
-		N   string `json:"n"`
-		E   string `json:"e"`
-		KID string `json:"kid"`
-		// kty string
-		// use string
-	} `json:"keys"`
-}
-
-func parseJWKS(r io.Reader) (*jwks, error) {
-	var keys = new(jwks)
-	err := json.NewDecoder(r).Decode(keys)
-	if err != nil {
-		err = fmt.Errorf("error decoing json %v,%v", r, err)
-	}
-	if keys.Keys == nil {
-		err = fmt.Errorf("no keys in json %v", r)
-	}
-	return keys, err
-}
-
 type Verifier struct {
-	publicKeys map[string]*rsa.PublicKey
-	clientID   string
-	issuer     string
+	keys     *keyCache
+	clientID string
+	issuer   string
 }
 
 // NewVerifier returns a Verifier which parses and verifies Google issued tokens.
-// Tokens will be verified with keys supplied by jwksReader and checked that their subject matches clientID.
-func NewVerifier(jwksReader io.Reader, clientID string) (*Verifier, error) {
+// Tokens will be verified with keys supplied by keyFetcher and checked that their subject matches clientID.
+func NewVerifier(keyFetcher KeyFetcherFunc, clientID string) (*Verifier, error) {
+
+	c, err := newKeyCache(keyFetcher)
+
+	if err != nil {
+		err = fmt.Errorf("create key cache - %v", err)
+	}
 
 	v := &Verifier{
+		keys:     c,
 		clientID: clientID,
 		issuer:   "https://accounts.google.com",
 	}
-	err := v.UpdatePublicKey(jwksReader)
 
-	if err != nil {
-		return nil, fmt.Errorf("unable to set public key, %v", err)
-	}
-
-	return v, nil
+	return v, err
 
 }
 
@@ -73,21 +55,25 @@ func (v *Verifier) ParseAndVerify(tokenString string) (*JWT, error) {
 
 	var parsedToken *JWT
 	if parsedToken, err = parseJWT(parts); err != nil {
-		return parsedToken, fmt.Errorf("unable to decode token %v, %v", parts, err)
+		return parsedToken, fmt.Errorf("decode token %v - %v", parts, err)
 	}
 
 	if parsedToken.Header.ALG != "RS256" {
 		return parsedToken, fmt.Errorf("expected alg RS256, but token alg is %v", parsedToken.Header.ALG)
 	}
 
-	key, ok := v.publicKeys[parsedToken.Header.KID]
+	key, err := v.keys.retrieveKey(parsedToken.Header.KID)
 
-	if !ok {
+	if err != nil {
+		return parsedToken, fmt.Errorf("retrieve key - %v", err)
+	}
+
+	if key == nil {
 		return parsedToken, fmt.Errorf("matching key not found")
 	}
 
 	if err = verifySignature(strings.Join(parts[0:2], "."), parts[2], key); err != nil {
-		return parsedToken, fmt.Errorf("unable to verify signature, %v", err)
+		return parsedToken, fmt.Errorf("verify signature - %v", err)
 	}
 
 	if parsedToken.Claims.ISS != v.issuer {
@@ -95,51 +81,13 @@ func (v *Verifier) ParseAndVerify(tokenString string) (*JWT, error) {
 	}
 
 	if parsedToken.Claims.AUD != v.clientID {
-		return parsedToken, fmt.Errorf("client IDS do not match")
+		return parsedToken, fmt.Errorf("client ID does not match")
 	}
 	if parsedToken.Claims.EXP <= time.Now().Unix() {
 		return parsedToken, fmt.Errorf("token expired")
 	}
 
 	return parsedToken, nil
-}
-
-// UpdatePublicKey sets the verifier public key to the key obtained from jwksReader.
-func (v *Verifier) UpdatePublicKey(jwksReader io.Reader) error {
-	m := make(map[string]*rsa.PublicKey)
-	jwks, err := parseJWKS(jwksReader)
-
-	if err != nil {
-		return fmt.Errorf("unable to parse JWKS %v", err)
-	}
-
-	for _, v := range jwks.Keys {
-		if v.E == "" || v.N == "" || v.KID == "" {
-			return fmt.Errorf("missing info in JWK %v", v)
-		}
-		decodedN, err := base64.RawURLEncoding.DecodeString(v.N)
-		if err != nil {
-			return fmt.Errorf("unable to base64 decode jwk n value %v, %v", v.N, err)
-		}
-		decodedE, err := base64.RawURLEncoding.DecodeString(v.E)
-		if err != nil {
-			return fmt.Errorf("unable to base64 decode jwk e value %v, %v", v.E, err)
-		}
-
-		n := big.NewInt(0).SetBytes(decodedN)
-
-		e := big.NewInt(0).SetBytes(decodedE).Uint64()
-
-		m[v.KID] = &rsa.PublicKey{
-			N: n,
-			E: int(e),
-		}
-	}
-	if len(m) == 0 {
-		return fmt.Errorf("no public keys %v", jwks)
-	}
-	v.publicKeys = m
-	return nil
 }
 
 func verifySignature(signedString, signature string, key *rsa.PublicKey) error {
@@ -215,4 +163,143 @@ func parseJWT(tokenParts []string) (*JWT, error) {
 	token.Signature = tokenParts[2]
 
 	return &token, nil
+}
+
+type KeyFetcherFunc func() (r io.ReadCloser, expires time.Time, err error)
+
+type keyCache struct {
+	keyFetcher KeyFetcherFunc
+	publicKeys map[string]*rsa.PublicKey
+	keyExpire  time.Time
+}
+
+func newKeyCache(keyFetcherFunc KeyFetcherFunc) (*keyCache, error) {
+
+	k := &keyCache{
+		keyFetcher: keyFetcherFunc,
+	}
+
+	if _, err := k.retrieveKey(""); err != nil {
+		return k, fmt.Errorf("get key - %v", err)
+	}
+
+	return k, nil
+}
+
+// UpdatePublicKey sets the verifier public key to the key obtained from jwksReader.
+func (v *keyCache) UpdatePublicKey(jwksReader io.Reader, expiration time.Time) error {
+	m := make(map[string]*rsa.PublicKey)
+	jwks, err := parseJWKS(jwksReader)
+
+	if err != nil {
+		return fmt.Errorf("unable to parse JWKS %v", err)
+	}
+
+	for _, v := range jwks.Keys {
+		if v.E == "" || v.N == "" || v.KID == "" {
+			return fmt.Errorf("missing info in JWK %v", v)
+		}
+		decodedN, err := base64.RawURLEncoding.DecodeString(v.N)
+		if err != nil {
+			return fmt.Errorf("unable to base64 decode jwk n value %v, %v", v.N, err)
+		}
+		decodedE, err := base64.RawURLEncoding.DecodeString(v.E)
+		if err != nil {
+			return fmt.Errorf("unable to base64 decode jwk e value %v, %v", v.E, err)
+		}
+
+		n := big.NewInt(0).SetBytes(decodedN)
+
+		e := big.NewInt(0).SetBytes(decodedE).Uint64()
+
+		m[v.KID] = &rsa.PublicKey{
+			N: n,
+			E: int(e),
+		}
+	}
+	if len(m) == 0 {
+		return fmt.Errorf("no public keys %v", jwks)
+	}
+
+	v.publicKeys = m
+	v.keyExpire = expiration
+	return nil
+}
+
+// keyFetcher updates the key cache if it's expired and returns the requested key. If key is not in cache, nil is returned.
+func (v *keyCache) retrieveKey(kid string) (*rsa.PublicKey, error) {
+	if v.keyExpire.Before(time.Now()) {
+		reader, expires, err := v.keyFetcher()
+		if err != nil {
+			return nil, fmt.Errorf("fetch key - %v", err)
+		}
+		defer reader.Close()
+		if err = v.UpdatePublicKey(reader, expires); err != nil {
+			return nil, fmt.Errorf("update key cache - %v", err)
+		}
+	}
+
+	return v.publicKeys[kid], nil
+}
+
+// DefaultKeyFetcher does an http request to obtain the google public certificates, the request times out after 10 seconds.
+// returns the response body and its max-age.
+func DefaultKeyFetcher() (r io.ReadCloser, expires time.Time, err error) {
+	ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancelFunc()
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v3/certs", nil)
+	if err != nil {
+		return nil, time.Now(), fmt.Errorf("create request - %v", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+
+	if err != nil {
+		return nil, time.Now(), fmt.Errorf("request - %v", err)
+	}
+
+	age, err := extractMaxAge(res.Header.Get("cache-control"))
+	if err != nil {
+		return nil, time.Now(), fmt.Errorf("get max-age - %v", err)
+	}
+
+	return res.Body, time.Now().Add(time.Second * time.Duration(age)), nil
+}
+
+// extractMaxAge returns the max-age value from an cache-control http response header or an error if finding a max-age failed.
+func extractMaxAge(cacheCtrlValue string) (int, error) {
+	cacheValues := strings.Split(cacheCtrlValue, ", ")
+	for _, v := range cacheValues {
+		if strings.HasPrefix(v, "max-age") {
+			maxAgeStr := strings.Split(v, "=")[1]
+			maxAge, err := strconv.Atoi(maxAgeStr)
+			if err != nil {
+				return 0, fmt.Errorf("convert max-age value %v to number - %v", maxAgeStr, err)
+			}
+			return maxAge, nil
+		}
+	}
+	return 0, fmt.Errorf("max-age not found in %v", cacheCtrlValue)
+}
+
+type jwks struct {
+	Keys []struct {
+		// alg string
+		N   string `json:"n"`
+		E   string `json:"e"`
+		KID string `json:"kid"`
+		// kty string
+		// use string
+	} `json:"keys"`
+}
+
+func parseJWKS(r io.Reader) (*jwks, error) {
+	var keys = new(jwks)
+	err := json.NewDecoder(r).Decode(keys)
+	if err != nil {
+		err = fmt.Errorf("decoing json %v - %v", r, err)
+	} else if keys.Keys == nil {
+		err = fmt.Errorf("empty key list %v", r)
+	}
+
+	return keys, err
 }
