@@ -1,5 +1,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/meblum/jwt.svg)](https://pkg.go.dev/github.com/meblum/jwt)
+
 # JWT
+
 A tiny and simple Go utility to parse and verify [Google issued](https://developers.google.com/identity/protocols/oauth2/openid-connect) Json Web Tokens.
 
 Please see the [documentation](https://pkg.go.dev/github.com/meblum/jwt).
@@ -16,11 +18,11 @@ import (
 )
 
 func main() {
-	// errors omitted for brevity
 
-	res, _ := http.Get("https://www.googleapis.com/oauth2/v3/certs")
-	verifier, _ := jwt.NewVerifier(res.Body, "your.google.clientID")
-	res.Body.Close()
+	verifier, err := jwt.NewVerifier(jwt.DefaultKeyFetcher, "your.google.clientID")
+	if err != nil{
+		// handle error
+	}
 
 	token, err := verifier.ParseAndVerify("your.jwt.string")
 
