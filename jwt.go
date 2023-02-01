@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -165,12 +166,14 @@ func parseJWT(tokenParts []string) (*JWT, error) {
 	return &token, nil
 }
 
+// KeyFetcherFunc is used to retrieve the public keys. May be called asynchronously by multiple go routines.
 type KeyFetcherFunc func() (r io.ReadCloser, expires time.Time, err error)
 
 type keyCache struct {
 	keyFetcher KeyFetcherFunc
 	publicKeys map[string]*rsa.PublicKey
 	keyExpire  time.Time
+	mu         sync.RWMutex
 }
 
 func newKeyCache(keyFetcherFunc KeyFetcherFunc) (*keyCache, error) {
@@ -221,14 +224,18 @@ func (v *keyCache) UpdatePublicKey(jwksReader io.Reader, expiration time.Time) e
 		return fmt.Errorf("no public keys %v", jwks)
 	}
 
+	v.mu.Lock()
 	v.publicKeys = m
 	v.keyExpire = expiration
+	v.mu.Unlock()
 	return nil
 }
 
 // keyFetcher updates the key cache if it's expired and returns the requested key. If key is not in cache, nil is returned.
 func (v *keyCache) retrieveKey(kid string) (*rsa.PublicKey, error) {
+	v.mu.RLock()
 	if v.keyExpire.Before(time.Now()) {
+		v.mu.RUnlock() // UpdatePublicKey acquires mu.Lock
 		reader, expires, err := v.keyFetcher()
 		if err != nil {
 			return nil, fmt.Errorf("fetch key - %v", err)
@@ -237,9 +244,12 @@ func (v *keyCache) retrieveKey(kid string) (*rsa.PublicKey, error) {
 		if err = v.UpdatePublicKey(reader, expires); err != nil {
 			return nil, fmt.Errorf("update key cache - %v", err)
 		}
+		v.mu.RLock()
 	}
 
-	return v.publicKeys[kid], nil
+	k := v.publicKeys[kid]
+	v.mu.RUnlock()
+	return k, nil
 }
 
 // DefaultKeyFetcher does an http request to obtain the google public certificates, the request times out after 10 seconds.
