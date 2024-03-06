@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/rsa"
-	_ "crypto/sha256" // link into binary
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,19 +26,12 @@ type Verifier struct {
 // NewVerifier returns a Verifier which parses and verifies Google issued tokens.
 // Tokens will be verified with keys supplied by keyFetcher and checked that their subject matches clientID.
 func NewVerifier(keyFetcher KeyFetcherFunc, clientID string) (*Verifier, error) {
-
 	c, err := newKeyCache(keyFetcher)
-
-	if err != nil {
-		err = fmt.Errorf("create key cache - %v", err)
-	}
-
 	v := &Verifier{
 		keys:     c,
 		clientID: clientID,
 		issuer:   "https://accounts.google.com",
 	}
-
 	return v, err
 
 }
@@ -47,68 +40,64 @@ func NewVerifier(keyFetcher KeyFetcherFunc, clientID string) (*Verifier, error) 
 // A non-nil error implies that the token is invalid.
 func (v *Verifier) ParseAndVerify(tokenString string) (*JWT, error) {
 	//TODO If you specified a hd parameter value in the request, verify that the ID token has a hd claim that matches an accepted G Suite hosted domain.
-	var err error
 
 	parts := strings.Split(tokenString, ".")
-	if len(parts) != 3 || parts[2] == "" {
+	if len(parts) != 3 {
 		return nil, fmt.Errorf("malformed token %v", tokenString)
 	}
 
-	var parsedToken *JWT
-	if parsedToken, err = parseJWT(parts); err != nil {
-		return parsedToken, fmt.Errorf("decode token %v - %v", parts, err)
+	parsedToken, err := parseJWT(parts[0], parts[1], parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("decode token %v - %v", parts, err)
 	}
 
 	if parsedToken.Header.ALG != "RS256" {
-		return parsedToken, fmt.Errorf("expected alg RS256, but token alg is %v", parsedToken.Header.ALG)
+		return nil, fmt.Errorf("expected alg RS256, but token alg is %v", parsedToken.Header.ALG)
 	}
 
 	key, err := v.keys.retrieveKey(parsedToken.Header.KID)
-
 	if err != nil {
-		return parsedToken, fmt.Errorf("retrieve key - %v", err)
+		return nil, fmt.Errorf("retrieve key - %v", err)
 	}
 
 	if key == nil {
-		return parsedToken, fmt.Errorf("matching key not found")
+		return nil, fmt.Errorf("matching key not found")
 	}
 
-	if err = verifySignature(strings.Join(parts[0:2], "."), parts[2], key); err != nil {
-		return parsedToken, fmt.Errorf("verify signature - %v", err)
+	if err := verifySignature(strings.Join(parts[0:2], "."), parts[2], key); err != nil {
+		return nil, fmt.Errorf("verify signature - %v", err)
 	}
 
 	if parsedToken.Claims.ISS != v.issuer {
-		return parsedToken, fmt.Errorf("invalid issuer")
+		return nil, fmt.Errorf("invalid issuer")
 	}
 
 	if parsedToken.Claims.AUD != v.clientID {
-		return parsedToken, fmt.Errorf("client ID does not match")
+		return nil, fmt.Errorf("client ID does not match")
 	}
+
 	if parsedToken.Claims.EXP <= time.Now().Unix() {
-		return parsedToken, fmt.Errorf("token expired")
+		return nil, fmt.Errorf("token expired")
+	}
+
+	if parsedToken.Claims.IAT > time.Now().Unix() {
+		return nil, fmt.Errorf("token issued for future time")
 	}
 
 	return parsedToken, nil
 }
 
 func verifySignature(signedString, signature string, key *rsa.PublicKey) error {
-	var err error
-
-	var sig []byte
-	if sig, err = base64.RawURLEncoding.DecodeString(signature); err != nil {
+	sig, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil {
 		return fmt.Errorf("unable to base64 decode signature %v, %v", signature, err)
 	}
+	hashed := sha256.Sum256([]byte(signedString))
 
-	if !crypto.SHA256.Available() {
-		return fmt.Errorf("SHA256 unavailable")
+	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, hashed[:], sig); err != nil {
+		return fmt.Errorf("signature verification failed, %v", err)
 	}
-	hasher := crypto.SHA256.New()
-	hasher.Write([]byte(signedString))
-
-	if err = rsa.VerifyPKCS1v15(key, crypto.SHA256, hasher.Sum(nil), sig); err != nil {
-		err = fmt.Errorf("signature verification failed, %v", err)
-	}
-	return err
+	return nil
 }
 
 type JWT struct {
@@ -139,29 +128,25 @@ type JWT struct {
 	Signature string
 }
 
-func parseJWT(tokenParts []string) (*JWT, error) {
+func parseJWT(header, claims, signature string) (*JWT, error) {
+	var token JWT
 
-	h, err := base64.RawURLEncoding.DecodeString(tokenParts[0])
+	h, err := base64.RawURLEncoding.DecodeString(header)
 	if err != nil {
-		return nil, fmt.Errorf("unable to base64 decode %v, %v", tokenParts[0], err)
+		return nil, fmt.Errorf("unable to base64 decode %v, %v", header, err)
 	}
-
-	var token = JWT{}
-
 	if err = json.Unmarshal(h, &token.Header); err != nil {
 		return nil, fmt.Errorf("unable to json decode %v, %v", h, err)
 	}
 
-	c, err := base64.RawURLEncoding.DecodeString(tokenParts[1])
+	c, err := base64.RawURLEncoding.DecodeString(claims)
 	if err != nil {
-		return nil, fmt.Errorf("unable to base64 decode %v, %v", tokenParts[1], err)
+		return nil, fmt.Errorf("unable to base64 decode %v, %v", claims, err)
 	}
-
 	if err = json.Unmarshal(c, &token.Claims); err != nil {
 		return nil, fmt.Errorf("unable to json decode %v, %v", c, err)
 	}
-
-	token.Signature = tokenParts[2]
+	token.Signature = signature
 
 	return &token, nil
 }
@@ -177,15 +162,12 @@ type keyCache struct {
 }
 
 func newKeyCache(keyFetcherFunc KeyFetcherFunc) (*keyCache, error) {
-
 	k := &keyCache{
 		keyFetcher: keyFetcherFunc,
 	}
-
 	if _, err := k.retrieveKey(""); err != nil {
-		return k, fmt.Errorf("get key - %v", err)
+		return k, err
 	}
-
 	return k, nil
 }
 
@@ -212,8 +194,7 @@ func (v *keyCache) UpdatePublicKey(jwksReader io.Reader, expiration time.Time) e
 		}
 
 		n := big.NewInt(0).SetBytes(decodedN)
-
-		e := big.NewInt(0).SetBytes(decodedE).Uint64()
+		e := big.NewInt(0).SetBytes(decodedE).Int64()
 
 		m[v.KID] = &rsa.PublicKey{
 			N: n,
@@ -303,13 +284,12 @@ type jwks struct {
 }
 
 func parseJWKS(r io.Reader) (*jwks, error) {
-	var keys = new(jwks)
-	err := json.NewDecoder(r).Decode(keys)
-	if err != nil {
-		err = fmt.Errorf("decoing json %v - %v", r, err)
-	} else if keys.Keys == nil {
-		err = fmt.Errorf("empty key list %v", r)
+	var keys jwks
+	if err := json.NewDecoder(r).Decode(&keys); err != nil {
+		return nil, fmt.Errorf("decode json %v - %v", r, err)
 	}
-
-	return keys, err
+	if keys.Keys == nil {
+		return nil, fmt.Errorf("empty key list %v", r)
+	}
+	return &keys, nil
 }
